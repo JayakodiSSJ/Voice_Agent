@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["chromium", "glib", "nss", "nspr", "at-spi2-atk", "cups", "libdrm", "mesa"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm start"
