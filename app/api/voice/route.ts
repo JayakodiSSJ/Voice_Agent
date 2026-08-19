@@ -16,7 +16,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer';
 import Groq, { toFile } from 'groq-sdk';
-import { saveTurn, getHistory } from '@/db/memory';
+import { saveTurn, getHistory } from "@/db/turns";
+
+import { getTenant } from "@/app/lib/tenant/resolve";
 import { extractText, getDocumentProxy } from 'unpdf';
 import { retrieveRelevantChunks, formatChunksForPrompt } from '../../lib/rag/retriever';
 
@@ -145,7 +147,12 @@ Note: questions about SLT plans, prices, or services do NOT need live scraping (
 
 // ── MAIN API HANDLER ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
+
   try {
+    const tenant = await getTenant(request);
+    if (!tenant) {
+      return NextResponse.json({ error: "unknown tenant" }, { status: 404 });
+    }
     const formData = await request.formData();
     const audioFile = formData.get('audio') as File;
     const uploadedFile = formData.get('file') as File | null;
@@ -175,11 +182,11 @@ export async function POST(request: NextRequest) {
       userText = await googleSTT(audioBuffer, langCode);
     }
 
-    
+
     if (!userText) return NextResponse.json({ error: 'could not understand audio' }, { status: 400 });
 
     // save user message to SQLite memory (conversation history)
-    saveTurn(sessionId, 'user', userText);
+    await saveTurn(tenant.id, sessionId, "user", userText);
 
     let answer = '';
 
@@ -206,7 +213,7 @@ export async function POST(request: NextRequest) {
       } else if (uploadedFile.type === 'application/pdf') {
         // extract PDF text, then ask LLM to answer based on it
         const pdfText = await extractPdfText(fileBuffer).catch(() => 'could not extract PDF text');
-        const history = getHistory(sessionId, 6);
+        const history = await getHistory(tenant.id, sessionId, 6);
         const r = await getGroq().chat.completions.create({
           model: 'llama-3.1-8b-instant',
           messages: [
@@ -235,7 +242,7 @@ export async function POST(request: NextRequest) {
       let webData = '';
       const scrapeDecision = await needsLiveScraping(userText);
       if (scrapeDecision.needed && scrapeDecision.url) {
-        
+
         try { webData = await scrapeWebsite(scrapeDecision.url); }
         catch { webData = 'website could not be loaded'; }
       }
@@ -247,7 +254,7 @@ export async function POST(request: NextRequest) {
       // The messages array contains:
       //   - conversation history (from SQLite memory — remembers past turns)
       //   - current user message + optional live web data
-      const history = getHistory(sessionId, 8);
+      const history = await getHistory(tenant.id, sessionId, 8);
 
       const systemPrompt = `You are SLT Mobitel Voice AI — a helpful assistant with memory and real-time SLT knowledge.
 ${lang.instruction}
@@ -275,8 +282,8 @@ If the answer is in the SLT information above, use it. If not, use your general 
     answer = answer.replace(/[*_`#]/g, '').trim();
 
     // save assistant answer to SQLite memory for future context
-    saveTurn(sessionId, 'assistant', answer);
-    
+    await saveTurn(tenant.id, sessionId, 'assistant', answer);
+
 
     // ── STEP 6: Text to Speech ────────────────────────────────
     // English → return text only, frontend uses browser TTS (fast, free)

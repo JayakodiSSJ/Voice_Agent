@@ -13,6 +13,8 @@ function getPinecone() {
 const INDEX_NAME = process.env.PINECONE_INDEX_NAME || 'slt-knowledge';
 
 async function embedQuery(text: string): Promise<number[]> {
+
+
   const res = await fetch('https://api.jina.ai/v1/embeddings', {
     method: 'POST',
     headers: {
@@ -30,20 +32,20 @@ async function embedQuery(text: string): Promise<number[]> {
 }
 
 export interface RetrievedChunk {
-  text:   string;
+  text: string;
   source: string;
   domain: string;
-  score:  number;
+  score: number;
 }
 
 export async function retrieveRelevantChunks(
   userQuery: string,
-  topK           = 4,
+  topK = 4,
   scoreThreshold = 0.4,   // lowered from 0.5 — catches more relevant content
 ): Promise<RetrievedChunk[]> {
   try {
     const queryVector = await embedQuery(userQuery);
-    const results     = await getPinecone()
+    const results = await getPinecone()
       .index(INDEX_NAME)
       .namespace('slt-content')
       .query({ vector: queryVector, topK, includeMetadata: true });
@@ -51,10 +53,10 @@ export async function retrieveRelevantChunks(
     const chunks = results.matches
       .filter(m => (m.score ?? 0) >= scoreThreshold)
       .map(m => ({
-        text:   (m.metadata?.text   as string) || '',
+        text: (m.metadata?.text as string) || '',
         source: (m.metadata?.source as string) || '',
         domain: (m.metadata?.domain as string) || 'general',
-        score:  m.score ?? 0,
+        score: m.score ?? 0,
       }))
       .filter(c => c.text.length > 0);
 
