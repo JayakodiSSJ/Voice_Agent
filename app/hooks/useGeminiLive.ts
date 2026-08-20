@@ -6,7 +6,7 @@ import { AppLanguage } from '../components/voice/types';
 
 //  gemini 3.1 preview
 
-const MODEL  = 'models/gemini-3.1-flash-live-preview';
+const MODEL = 'models/gemini-3.1-flash-live-preview';
 const WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
 
 const TARGET_SR = 16000; // Gemini input: 16 kHz
@@ -23,16 +23,16 @@ interface Options {
   onError: (msg: string) => void;
 }
 interface Return {
-  liveState:  LiveState;
-  connect:    () => Promise<void>;
+  liveState: LiveState;
+  connect: () => Promise<void>;
   disconnect: () => void;
-  interrupt:  () => void;
-  wsSend:     (payload: object) => void;
+  interrupt: () => void;
+  wsSend: (payload: object) => void;
 }
 
 // PCM helpers 
 function float32ToPCM16(f32: Float32Array): ArrayBuffer {
-  const buf  = new ArrayBuffer(f32.length * 2);
+  const buf = new ArrayBuffer(f32.length * 2);
   const view = new DataView(buf);
   for (let i = 0; i < f32.length; i++) {
     const s = Math.max(-1, Math.min(1, f32[i]));
@@ -48,7 +48,7 @@ function bufToB64(buf: ArrayBuffer): string {
 }
 function b64ToBuf(b64: string): ArrayBuffer {
   const bin = atob(b64);
-  const buf  = new ArrayBuffer(bin.length);
+  const buf = new ArrayBuffer(bin.length);
   const view = new Uint8Array(buf);
   for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i);
   return buf;
@@ -56,20 +56,20 @@ function b64ToBuf(b64: string): ArrayBuffer {
 // Linear-interpolation downsample — good enough for voice
 function downsample(input: Float32Array, srcRate: number): Float32Array {
   if (srcRate === TARGET_SR) return input;
-  const ratio  = srcRate / TARGET_SR;
+  const ratio = srcRate / TARGET_SR;
   const outLen = Math.floor(input.length / ratio);
-  const out    = new Float32Array(outLen);
+  const out = new Float32Array(outLen);
   for (let i = 0; i < outLen; i++) {
     const lo = Math.floor(i * ratio);
     const hi = Math.min(lo + 1, input.length - 1);
-    out[i]   = input[lo] * (1 - (i * ratio - lo)) + input[hi] * (i * ratio - lo);
+    out[i] = input[lo] * (1 - (i * ratio - lo)) + input[hi] * (i * ratio - lo);
   }
   return out;
 }
 function mergeF32(arrays: Float32Array[]): Float32Array {
   const total = arrays.reduce((s, a) => s + a.length, 0);
-  const out   = new Float32Array(total);
-  let offset  = 0;
+  const out = new Float32Array(total);
+  let offset = 0;
   for (const a of arrays) { out.set(a, offset); offset += a.length; }
   return out;
 }
@@ -88,14 +88,16 @@ registerProcessor('mic-capture', MicCapture);
 `;
 
 //  System prompt 
-const SYSTEM_PROMPT = `You are Vidya, a warm and professional AI voice assistant for SLT Mobitel — Sri Lanka's leading telecommunications company.
+function buildSystemPrompt(personaName: string): string {
+  return `You are ${personaName}, a warm and professional AI voice assistant.
 
 Respond in the SAME language the user speaks: English, Sinhala (සිංහල), or Tamil (தமிழ்). Auto-detect from the first message.
 
 You help with: data balance, mobile packages, fiber/4G connections, billing, plan recommendations, new connections.
 
-When you need specific SLT product details, pricing, or policy info — call search_knowledge_base FIRST.
+When you need specific product details, pricing, or policy info — call search_knowledge_base FIRST.
 Keep responses concise (2–3 sentences). Be warm and professional.`;
+}
 
 const TOOLS = [{
   functionDeclarations: [{
@@ -115,19 +117,19 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
   const [liveState, setLiveState] = useState<LiveState>('disconnected');
   const stateRef = useRef<LiveState>('disconnected');
 
-  const wsRef           = useRef<WebSocket | null>(null);
-  const inputCtxRef     = useRef<AudioContext | null>(null);
-  const workletRef      = useRef<AudioWorkletNode | null>(null);
-  const micStreamRef    = useRef<MediaStream | null>(null);
-  const outputCtxRef    = useRef<AudioContext | null>(null);
-  const analyserRef     = useRef<AnalyserNode | null>(null);
-  const nextPlayRef     = useRef(0);
-  const sourcesRef      = useRef<AudioBufferSourceNode[]>([]);
-  const heardRef        = useRef('');
-  const answerRef       = useRef('');
+  const wsRef = useRef<WebSocket | null>(null);
+  const inputCtxRef = useRef<AudioContext | null>(null);
+  const workletRef = useRef<AudioWorkletNode | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const outputCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const nextPlayRef = useRef(0);
+  const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const heardRef = useRef('');
+  const answerRef = useRef('');
   // Accumulate worklet chunks before sending (avoids flooding WS)
-  const accBuf          = useRef<Float32Array[]>([]);
-  const accLen          = useRef(0);
+  const accBuf = useRef<Float32Array[]>([]);
+  const accLen = useRef(0);
 
   const go = (s: LiveState) => { stateRef.current = s; setLiveState(s); };
 
@@ -158,46 +160,46 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
 
   //  Interrupt 
   const interrupt = useCallback(() => {
-    sourcesRef.current.forEach(s => { try { s.stop(0); } catch {} });
+    sourcesRef.current.forEach(s => { try { s.stop(0); } catch { } });
     sourcesRef.current = [];
     nextPlayRef.current = outputCtxRef.current?.currentTime ?? 0;
     if (stateRef.current === 'speaking') go('listening');
   }, []);
 
   //  RAG tool call 
- const handleToolCall = async (tc: {
-  functionCalls: { id: string; name: string; args: Record<string, string> }[]
-}) => {
-  go('thinking');
+  const handleToolCall = async (tc: {
+    functionCalls: { id: string; name: string; args: Record<string, string> }[]
+  }) => {
+    go('thinking');
 
-  const responses = [];
-  for (const call of tc.functionCalls ?? []) {
-    if (call.name === 'search_knowledge_base') {
-      try {
-        const r = await fetch(`/api/rag/search?query=${encodeURIComponent(call.args.query ?? '')}`);
-        const d = await r.json() as { result: string };
-        responses.push({
-          id: call.id,
-          name: call.name,
-          response: { output: d.result || 'No relevant information found.' }
-        });
-      } catch {
-        responses.push({
-          id: call.id,
-          name: call.name,
-          response: { output: 'Knowledge base temporarily unavailable.' }
-        });
+    const responses = [];
+    for (const call of tc.functionCalls ?? []) {
+      if (call.name === 'search_knowledge_base') {
+        try {
+          const r = await fetch(`/api/rag/search?query=${encodeURIComponent(call.args.query ?? '')}`);
+          const d = await r.json() as { result: string };
+          responses.push({
+            id: call.id,
+            name: call.name,
+            response: { output: d.result || 'No relevant information found.' }
+          });
+        } catch {
+          responses.push({
+            id: call.id,
+            name: call.name,
+            response: { output: 'Knowledge base temporarily unavailable.' }
+          });
+        }
       }
     }
-  }
 
-  // Send toolResponse immediately — no delays, no clientContent injection
-  if (wsRef.current?.readyState === WebSocket.OPEN) {
-    wsRef.current.send(JSON.stringify({
-      toolResponse: { functionResponses: responses }
-    }));
-  }
-};
+    // Send toolResponse immediately — no delays, no clientContent injection
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        toolResponse: { functionResponses: responses }
+      }));
+    }
+  };
 
   // Send accumulated PCM to Gemini 
   // Use realtimeInput.audio 
@@ -206,14 +208,14 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
     if (stateRef.current !== 'listening') return; // gate: don't send while Gemini speaks
 
     const resampled = downsample(f32, inputCtxRef.current?.sampleRate ?? TARGET_SR);
-    const pcm16     = float32ToPCM16(resampled);
-    const b64       = bufToB64(pcm16);
+    const pcm16 = float32ToPCM16(resampled);
+    const b64 = bufToB64(pcm16);
 
     //  NEW FORMAT — realtimeInput.audio (replaces deprecated mediaChunks)
     wsRef.current.send(JSON.stringify({
       realtimeInput: {
         audio: {
-          data:     b64,
+          data: b64,
           mimeType: `audio/pcm;rate=${TARGET_SR}`,
         },
       },
@@ -223,7 +225,7 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
   //  Start AudioWorklet mic capture 
   const startMic = async (stream: MediaStream, ctx: AudioContext) => {
     // Load worklet via inline Blob URL (no public file needed)
-    const blob    = new Blob([WORKLET_CODE], { type: 'application/javascript' });
+    const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
     const blobUrl = URL.createObjectURL(blob);
     try {
       await ctx.audioWorklet.addModule(blobUrl);
@@ -231,8 +233,8 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
       URL.revokeObjectURL(blobUrl);
     }
 
-    const source   = ctx.createMediaStreamSource(stream);
-    const worklet  = new AudioWorkletNode(ctx, 'mic-capture');
+    const source = ctx.createMediaStreamSource(stream);
+    const worklet = new AudioWorkletNode(ctx, 'mic-capture');
     workletRef.current = worklet;
 
     worklet.port.onmessage = (e: MessageEvent<Float32Array>) => {
@@ -263,6 +265,17 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
       return;
     }
 
+    // Fetch tenant-specific persona before connecting
+    let personaName = 'Vidya';
+    try {
+      const cfgRes = await fetch('/api/tenant/config');
+      if (cfgRes.ok) {
+        const cfg = await cfgRes.json();
+        personaName = cfg.personaName || 'Vidya';
+      }
+    } catch {
+      // fall back to default persona if config fetch fails
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
@@ -305,7 +318,7 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
               },
             },
             systemInstruction: {
-              parts: [{ text: SYSTEM_PROMPT }],
+              parts: [{ text: buildSystemPrompt(personaName) }],
             },
             tools: TOOLS,
           },
@@ -337,7 +350,7 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
           type SC = {
             modelTurn?: { parts?: { inlineData?: { mimeType: string; data: string } }[] };
             outputTranscription?: { text?: string };
-            inputTranscription?:  { text?: string };
+            inputTranscription?: { text?: string };
             turnComplete?: boolean;
             interrupted?: boolean;
           };
@@ -353,20 +366,20 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
 
           // Collect transcript text (works if model supports it)
           if (sc.outputTranscription?.text) answerRef.current += sc.outputTranscription.text;
-          if (sc.inputTranscription?.text)  heardRef.current   = sc.inputTranscription.text;
+          if (sc.inputTranscription?.text) heardRef.current = sc.inputTranscription.text;
 
           // Server-side interruption detected
           if (sc.interrupted) { interrupt(); return; }
 
           // Turn finished — wait for queued audio to drain then go back to listening
           if (sc.turnComplete) {
-            const ctx       = outputCtxRef.current;
+            const ctx = outputCtxRef.current;
             const remaining = ctx ? Math.max(0, (nextPlayRef.current - ctx.currentTime) * 1000) : 0;
             setTimeout(() => {
               if (stateRef.current === 'speaking') go('listening');
               if (heardRef.current || answerRef.current) {
                 onTurnComplete(heardRef.current.trim(), answerRef.current.trim());
-                heardRef.current  = '';
+                heardRef.current = '';
                 answerRef.current = '';
               }
             }, remaining + 300);
@@ -393,7 +406,7 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
       onError(msg.includes('Permission') ? 'Microphone access denied — allow mic in browser settings' : msg);
       go('disconnected');
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language]);
 
   //  Disconnect & full cleanup 
@@ -410,16 +423,16 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
     micStreamRef.current = null;
 
     // Stop all playing audio
-    sourcesRef.current.forEach(s => { try { s.stop(0); } catch {} });
+    sourcesRef.current.forEach(s => { try { s.stop(0); } catch { } });
     sourcesRef.current = [];
     nextPlayRef.current = 0;
 
     // Close AudioContexts
-    inputCtxRef.current?.close().catch(() => {});
-    inputCtxRef.current  = null;
-    outputCtxRef.current?.close().catch(() => {});
+    inputCtxRef.current?.close().catch(() => { });
+    inputCtxRef.current = null;
+    outputCtxRef.current?.close().catch(() => { });
     outputCtxRef.current = null;
-    analyserRef.current  = null;
+    analyserRef.current = null;
 
     // Close WebSocket
     wsRef.current?.close(1000, 'User ended session');
@@ -428,12 +441,12 @@ export function useGeminiLive({ language, onTurnComplete, onError }: Options): R
     go('disconnected');
   }, []);
   // ADD this before the return:
-const wsSend = useCallback((payload: object) => {
-  if (wsRef.current?.readyState === WebSocket.OPEN) {
-    wsRef.current.send(JSON.stringify(payload));
-  }
-}, []);
+  const wsSend = useCallback((payload: object) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(payload));
+    }
+  }, []);
 
 
-  return { liveState, connect, disconnect, interrupt , wsSend };
+  return { liveState, connect, disconnect, interrupt, wsSend };
 }
