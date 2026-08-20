@@ -39,6 +39,7 @@ export interface RetrievedChunk {
 }
 
 export async function retrieveRelevantChunks(
+  tenantSlug: string,
   userQuery: string,
   topK = 4,
   scoreThreshold = 0.4,   // lowered from 0.5 — catches more relevant content
@@ -47,7 +48,7 @@ export async function retrieveRelevantChunks(
     const queryVector = await embedQuery(userQuery);
     const results = await getPinecone()
       .index(INDEX_NAME)
-      .namespace('slt-content')
+      .namespace(`${tenantSlug}-content`)
       .query({ vector: queryVector, topK, includeMetadata: true });
 
     const chunks = results.matches
